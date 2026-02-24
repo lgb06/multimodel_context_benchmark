@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 from openai import OpenAI
 
@@ -47,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_latest_input_record(input_json_path: Path) -> tuple[str, list[Path], dict]:
+def load_latest_input_record(input_json_path: Path) -> Tuple[str, List[Path], Dict]:
     if not input_json_path.exists():
         raise FileNotFoundError(f"Input JSON not found: {input_json_path}")
     if not input_json_path.is_file():
@@ -105,8 +106,8 @@ def load_image_as_data_url(image_path: Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def build_messages(text: str, image_paths: list[Path]) -> list[dict]:
-    content: list[dict] = [{"type": "text", "text": text}]
+def build_messages(text: str, image_paths: List[Path]) -> List[Dict]:
+    content: List[Dict] = [{"type": "text", "text": text}]
     for path in image_paths:
         content.append(
             {
@@ -117,7 +118,7 @@ def build_messages(text: str, image_paths: list[Path]) -> list[dict]:
     return [{"role": "user", "content": content}]
 
 
-def extract_model_text(response_data: dict) -> str:
+def extract_model_text(response_data: Dict) -> str:
     output_parts = []
     for choice in response_data.get("choices", []):
         message = choice.get("message", {})
@@ -139,11 +140,11 @@ def save_outputs(
     out_dir: Path,
     model: str,
     prompt_text: str,
-    image_paths: list[Path],
-    response_data: dict,
+    image_paths: List[Path],
+    response_data: Dict,
     model_output_text: str,
-    metadata: dict,
-) -> tuple[Path, Path]:
+    metadata: Dict,
+) -> Tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     raw_response_file = out_dir / f"openai_response_{timestamp}.json"
