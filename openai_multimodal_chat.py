@@ -53,7 +53,7 @@ def load_latest_input_record(input_json_path: Path) -> tuple[str, list[Path], di
     if not input_json_path.is_file():
         raise ValueError(f"Input JSON path is not a file: {input_json_path}")
 
-    with input_json_path.open("r", encoding="utf-8") as f:
+    with input_json_path.open("r", encoding="utf-8-sig") as f:
         data = json.load(f)
 
     if not isinstance(data, list) or not data:

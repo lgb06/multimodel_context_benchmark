@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--token",
-        default=os.getenv("GEMINI_API_TOKEN", "sk-5R1UbMmtQUs8gJ9Jhpf3ETAOuFlS9wV5wcjXP5B3XbyUYuM1"),
+        default=os.getenv("GEMINI_API_TOKEN", ""),
         help="Bearer token. Prefer env var GEMINI_API_TOKEN.",
     )
     parser.add_argument(
