@@ -1,16 +1,17 @@
 import argparse
 import base64
 import datetime as dt
-import http.client
 import json
 import mimetypes
 import os
 from pathlib import Path
 
+from openai import OpenAI
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Send text + image(s) from the last record in input JSON."
+        description="Use OpenAI SDK to send text + image(s) from the last record in input JSON."
     )
     parser.add_argument(
         "--input-json",
@@ -20,29 +21,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-        help="Model id, for example gemini-2.5-flash or your gemini-3 model id.",
+        help="Model id, for example your gemini-3 model id.",
     )
     parser.add_argument(
-        "--scheme",
-        choices=("http", "https"),
-        default=os.getenv("GEMINI_API_SCHEME", "http"),
-        help="API scheme.",
+        "--base-url",
+        default=os.getenv("OPENAI_BASE_URL", "http://35.220.164.252:3888/v1"),
+        help="OpenAI-compatible API base URL.",
     )
     parser.add_argument(
-        "--host",
-        default=os.getenv("GEMINI_API_HOST", "35.220.164.252"),
-        help="API host.",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=int(os.getenv("GEMINI_API_PORT", "3888")),
-        help="API port.",
-    )
-    parser.add_argument(
-        "--token",
-        default=os.getenv("GEMINI_API_TOKEN", "sk-5R1UbMmtQUs8gJ9Jhpf3ETAOuFlS9wV5wcjXP5B3XbyUYuM1"),
-        help="Bearer token. Prefer env var GEMINI_API_TOKEN.",
+        "--api-key",
+        default=os.getenv("OPENAI_API_KEY", os.getenv("GEMINI_API_TOKEN", "")),
+        help="API key for OpenAI SDK. Prefer env var OPENAI_API_KEY.",
     )
     parser.add_argument(
         "--out-dir",
@@ -51,9 +40,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeout",
-        type=int,
-        default=int(os.getenv("GEMINI_API_TIMEOUT", "120")),
-        help="HTTP timeout seconds.",
+        type=float,
+        default=float(os.getenv("OPENAI_TIMEOUT", "120")),
+        help="Request timeout seconds.",
     )
     return parser.parse_args()
 
@@ -109,61 +98,63 @@ def get_mime_type(image_path: Path) -> str:
     return mime_type
 
 
-def load_image_as_base64(image_path: Path) -> str:
+def load_image_as_data_url(image_path: Path) -> str:
+    mime_type = get_mime_type(image_path)
     with image_path.open("rb") as f:
-        return base64.b64encode(f.read()).decode("ascii")
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
-def build_payload(text: str, image_paths: list[Path]) -> dict:
-    parts = [{"text": text}]
+def build_messages(text: str, image_paths: list[Path]) -> list[dict]:
+    content: list[dict] = [{"type": "text", "text": text}]
     for path in image_paths:
-        parts.append(
+        content.append(
             {
-                "inline_data": {
-                    "mime_type": get_mime_type(path),
-                    "data": load_image_as_base64(path),
-                }
+                "type": "image_url",
+                "image_url": {"url": load_image_as_data_url(path)},
             }
         )
-    return {"contents": [{"parts": parts}]}
+    return [{"role": "user", "content": content}]
 
 
-def extract_model_text(response_json: dict) -> str:
+def extract_model_text(response_data: dict) -> str:
     output_parts = []
-    for candidate in response_json.get("candidates", []):
-        content = candidate.get("content", {})
-        for part in content.get("parts", []):
-            text = part.get("text")
-            if text:
-                output_parts.append(text)
+    for choice in response_data.get("choices", []):
+        message = choice.get("message", {})
+        content = message.get("content")
+        if isinstance(content, str):
+            if content:
+                output_parts.append(content)
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if text:
+                        output_parts.append(text)
     return "\n".join(output_parts).strip()
 
 
 def save_outputs(
     out_dir: Path,
-    status_code: int,
-    request_path: str,
     model: str,
     prompt_text: str,
     image_paths: list[Path],
-    response_json: dict | None,
-    raw_response_text: str,
+    response_data: dict,
     model_output_text: str,
     metadata: dict,
 ) -> tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_response_file = out_dir / f"gemini_response_{timestamp}.json"
-    log_file = out_dir / "gemini_run_log.jsonl"
+    raw_response_file = out_dir / f"openai_response_{timestamp}.json"
+    log_file = out_dir / "openai_run_log.jsonl"
 
-    response_to_save = response_json if response_json is not None else {"raw": raw_response_text}
     with raw_response_file.open("w", encoding="utf-8") as f:
-        json.dump(response_to_save, f, ensure_ascii=False, indent=2)
+        json.dump(response_data, f, ensure_ascii=False, indent=2)
 
     log_entry = {
         "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
-        "status_code": status_code,
-        "request_path": request_path,
+        "base_url": response_data.get("_base_url"),
         "model": model,
         "prompt_text": prompt_text,
         "image_paths": [str(p) for p in image_paths],
@@ -182,10 +173,8 @@ def save_outputs(
 
 def main() -> int:
     args = parse_args()
-    if not args.token:
-        raise SystemExit(
-            "Missing token. Set GEMINI_API_TOKEN or pass --token."
-        )
+    if not args.api_key:
+        raise SystemExit("Missing API key. Set OPENAI_API_KEY or pass --api-key.")
 
     prompt_text, image_paths, metadata = load_latest_input_record(Path(args.input_json))
     for image_path in image_paths:
@@ -194,49 +183,32 @@ def main() -> int:
         if not image_path.is_file():
             raise ValueError(f"Image path is not a file: {image_path}")
 
-    payload = build_payload(prompt_text, image_paths)
-    request_path = f"/v1beta/models/{args.model}:generateContent"
-    payload_text = json.dumps(payload)
-
-    connection_cls = (
-        http.client.HTTPSConnection if args.scheme == "https" else http.client.HTTPConnection
+    client = OpenAI(
+        api_key=args.api_key,
+        base_url=args.base_url,
+        timeout=args.timeout,
     )
-    conn = connection_cls(args.host, args.port, timeout=args.timeout)
-    headers = {
-        "Authorization": f"Bearer {args.token}",
-        "Content-Type": "application/json",
-    }
+    messages = build_messages(prompt_text, image_paths)
 
-    try:
-        conn.request("POST", request_path, payload_text, headers)
-        response = conn.getresponse()
-        raw_response_text = response.read().decode("utf-8", errors="replace")
-        status_code = response.status
-    finally:
-        conn.close()
-
-    try:
-        response_json = json.loads(raw_response_text)
-    except json.JSONDecodeError:
-        response_json = None
-
-    model_output_text = (
-        extract_model_text(response_json) if isinstance(response_json, dict) else raw_response_text
+    response = client.chat.completions.create(
+        model=args.model,
+        messages=messages,
     )
+    response_data = response.model_dump()
+    response_data["_base_url"] = args.base_url
+
+    model_output_text = extract_model_text(response_data)
     raw_file, log_file = save_outputs(
         out_dir=Path(args.out_dir),
-        status_code=status_code,
-        request_path=request_path,
         model=args.model,
         prompt_text=prompt_text,
         image_paths=image_paths,
-        response_json=response_json if isinstance(response_json, dict) else None,
-        raw_response_text=raw_response_text,
+        response_data=response_data,
         model_output_text=model_output_text,
         metadata=metadata,
     )
 
-    print(f"HTTP status: {status_code}")
+    print("Status: success")
     print(f"Input JSON: {metadata['input_json']}")
     print(f"Source: {metadata['source']}")
     print(f"Difficulty: {metadata['difficulty']}")
@@ -245,8 +217,7 @@ def main() -> int:
     print(f"Run log file: {log_file}")
     print("\nModel output:")
     print(model_output_text if model_output_text else "(empty)")
-
-    return 0 if status_code < 400 else 1
+    return 0
 
 
 if __name__ == "__main__":
