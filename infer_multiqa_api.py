@@ -109,19 +109,20 @@ def to_data_url(image_path: str) -> Optional[str]:
 def build_multimodal_messages(query: str, images: List[str], system_prompt: str) -> List[Dict[str, Any]]:
     content = []
     parts = query.split("<image>")
+    placeholder_count = max(len(parts) - 1, 0)
 
     for i, part in enumerate(parts):
         if part.strip():
             content.append({"type": "text", "text": part.strip()})
-        if i < len(images):
+        if i < placeholder_count and i < len(images):
             url = to_data_url(images[i])
             if url:
                 content.append({"type": "image_url", "image_url": {"url": url}})
             else:
                 content.append({"type": "text", "text": f"[Image load failed: {images[i]}]"})
 
-    if len(images) > len(parts) - 1:
-        for extra in images[len(parts) - 1 :]:
+    if len(images) > placeholder_count:
+        for extra in images[placeholder_count:]:
             url = to_data_url(extra)
             if url:
                 content.append({"type": "image_url", "image_url": {"url": url}})
