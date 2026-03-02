@@ -33,6 +33,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 from tqdm import tqdm
@@ -46,7 +47,7 @@ def log(message: str) -> None:
     print(f"[{get_timestamp()}] {message}")
 
 
-def load_input(file_path: str) -> list[dict]:
+def load_input(file_path: str) -> List[Dict[str, Any]]:
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Input file not found: {file_path}")
@@ -67,7 +68,7 @@ def load_input(file_path: str) -> list[dict]:
     return obj
 
 
-def load_jsonl(file_path: str) -> list[dict]:
+def load_jsonl(file_path: str) -> List[Dict[str, Any]]:
     path = Path(file_path)
     if not path.exists():
         return []
@@ -80,14 +81,14 @@ def load_jsonl(file_path: str) -> list[dict]:
     return out
 
 
-def append_jsonl(item: dict, file_path: str) -> None:
+def append_jsonl(item: Dict[str, Any], file_path: str) -> None:
     path = Path(file_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
-def encode_image(image_path: str) -> str | None:
+def encode_image(image_path: str) -> Optional[str]:
     try:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode("utf-8")
@@ -95,7 +96,7 @@ def encode_image(image_path: str) -> str | None:
         return None
 
 
-def to_data_url(image_path: str) -> str | None:
+def to_data_url(image_path: str) -> Optional[str]:
     encoded = encode_image(image_path)
     if not encoded:
         return None
@@ -105,7 +106,7 @@ def to_data_url(image_path: str) -> str | None:
     return f"data:{mime};base64,{encoded}"
 
 
-def build_multimodal_messages(query: str, images: list[str], system_prompt: str) -> list[dict]:
+def build_multimodal_messages(query: str, images: List[str], system_prompt: str) -> List[Dict[str, Any]]:
     content = []
     parts = query.split("<image>")
 
@@ -133,11 +134,11 @@ def build_multimodal_messages(query: str, images: list[str], system_prompt: str)
 
 def call_openai_api(
     client: OpenAI,
-    messages: list[dict],
+    messages: List[Dict[str, Any]],
     model: str,
     max_retries: int = 3,
     retry_delay: int = 3,
-) -> tuple[str | None, str | None]:
+) -> Tuple[Optional[str], Optional[str]]:
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
@@ -155,7 +156,7 @@ def call_openai_api(
     return None, "unknown error"
 
 
-def process_single_case(args: tuple) -> tuple[int, dict]:
+def process_single_case(args: tuple) -> Tuple[int, Dict[str, Any]]:
     idx, item, client, model, retry_delay, max_retries, system_prompt = args
     query = item.get("query", "")
     images = item.get("images", [])
